@@ -107,13 +107,16 @@ LlamaCode will start an interactive CLI session in your current working director
 
 ## Available Tools
 
-LlamaCode gives the AI access to the following file operations within your **current working directory**:
+LlamaCode gives the AI access to the following operations within your **current working directory**:
 
-| Tool          | Description                 |
-| ------------- | --------------------------- |
-| `read_file`   | Read the contents of a file |
-| `write_file`  | Write or overwrite a file   |
-| `delete_file` | Delete a file               |
+| Tool          | Description                                          |
+| ------------- | ---------------------------------------------------- |
+| `read_file`   | Read the contents of a file                           |
+| `write_file`  | Write or overwrite a file                             |
+| `delete_file` | Delete a file                                          |
+| `bash`        | Execute a Bash command and capture its output          |
+| `grep`        | Search for a pattern in files (regex)                 |
+| `glob`        | Find files matching a glob pattern                     |
 
 > **Security:** All file operations are sandboxed to the directory where LlamaCode was launched. The AI cannot access files outside of it.
 
@@ -151,6 +154,9 @@ src/
     read_file.ts
     write_file.ts
     delete_file.ts
+    bash.ts
+    grep.ts
+    glob.ts
     index.ts
   index.ts         # Entry point
   type.ts          # Shared TypeScript types
