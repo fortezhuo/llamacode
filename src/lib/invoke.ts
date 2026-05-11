@@ -9,7 +9,7 @@ export async function invoke(input: string) {
 
   while (true) {
     const messages = store.getMessages()
-    print("assistant").dim(`Thinking... (${messages.length} messages)`)
+    print("assistant").dim(`Thinking... [${messages.length} tokens in context]`)
     const response = await chat(messages)
     const { content, tool_calls } = response.message
 
@@ -19,6 +19,7 @@ export async function invoke(input: string) {
       for (const tool_call of tool_calls) {
         const { name, arguments: args } = (tool_call as ToolCall).function
         print("assistant").magenta(`Invoking tool: ${name}`)
+        print("assistant").magenta(`[${name}] ${formatArgs(args)}`)
         try {
           if (name in listTools) {
             const toolFunc = (listTools as Record<string, Function>)[name]
@@ -44,4 +45,23 @@ export async function invoke(input: string) {
       break
     }
   }
+}
+
+function formatArgs(args: Record<string, unknown>): string {
+  if (typeof args.cmd === "string") return args.cmd
+  if (typeof args.command === "string") return args.command
+
+  if (typeof args.path === "string") {
+    const extra =
+      typeof args.content === "string"
+        ? ` (${args.content.split("\n").length} lines)`
+        : ""
+    return args.path + extra
+  }
+
+  if (typeof args.pat === "string") {
+    return args.path ? `${args.pat} in ${args.path}` : args.pat
+  }
+
+  return JSON.stringify(args)
 }
