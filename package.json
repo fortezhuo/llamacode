@@ -13,6 +13,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
+    "fast-glob": "^3.3.3",
     "ollama": "^0.6.3",
     "tsx": "^4.21.0"
   },

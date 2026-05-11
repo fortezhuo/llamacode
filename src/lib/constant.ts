@@ -42,4 +42,25 @@ export const TOOLS = [
       { name: "content", type: "string", required: true },
     ],
   },
+  {
+    name: "glob",
+    description: "Find files matching a glob pattern",
+    input: [
+      { name: "pat", type: "string", required: true },
+      { name: "path", type: "string", required: false },
+    ],
+  },
+  {
+    name: "grep",
+    description: "Search for a pattern in files",
+    input: [
+      { name: "pat", type: "string", required: true },
+      { name: "path", type: "string", required: false },
+    ],
+  },
+  {
+    name: "bash",
+    description: "Execute a bash command and return the output",
+    input: [{ name: "cmd", type: "string", required: true }],
+  },
 ]
