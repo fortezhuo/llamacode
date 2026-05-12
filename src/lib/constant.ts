@@ -1,4 +1,5 @@
 export const MODEL = "gpt-oss:120b-cloud"
+export const EMBED_MODEL = "nomic-embed-text"
 export const TITLE = `
  🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙 
  🦙                                                                                🦙 
@@ -62,5 +63,15 @@ export const TOOLS = [
     name: "bash",
     description: "Execute a bash command and return the output",
     input: [{ name: "cmd", type: "string", required: true }],
+  },
+  {
+    name: "read_pdf",
+    description: "Read the contents of a PDF file",
+    input: [{ name: "path", type: "string", required: true }],
+  },
+  {
+    name: "search_pdf",
+    description: "Search for a term in indexed PDF files",
+    input: [{ name: "query", type: "string", required: true }],
   },
 ]
