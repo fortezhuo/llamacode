@@ -1,6 +1,6 @@
 # 🦙 LlamaCode
 
-An AI-powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript.
+An AI‑powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript. **Now includes Retrieval‑Augmented Generation (RAG) support using a SQLite‑backed vector store.**
 
 ---
 
@@ -40,6 +40,7 @@ LlamaCode requires a model that supports **tool/function calling**. Recommended 
 
 ```bash
 ollama pull gpt-oss:120b-cloud
+ollama pull nomic-embed-text
 ```
 
 > To see all models you have installed, run `ollama list`.
@@ -68,6 +69,7 @@ Set the model in `src/lib/constant.ts` to match what you pulled:
 
 ```ts
 export const MODEL = "gpt-oss:120b-cloud"
+export const EMBED_MODEL = "nomic-embed-text"
 ```
 
 ---
@@ -85,7 +87,7 @@ LlamaCode will start an interactive CLI session in your current working director
 
  ❯ buka package.json
  🦙 Invoking tool: read_file
- 🦙 Here's your package.json: ...
+ 🦙 Here’s your package.json: ...
 
  ❯ tambahkan script build ke package.json
  🦙 Invoking tool: write_file
@@ -109,14 +111,16 @@ LlamaCode will start an interactive CLI session in your current working director
 
 LlamaCode gives the AI access to the following operations within your **current working directory**:
 
-| Tool          | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| `read_file`   | Read the contents of a file                           |
-| `write_file`  | Write or overwrite a file                             |
-| `delete_file` | Delete a file                                          |
-| `bash`        | Execute a Bash command and capture its output          |
-| `grep`        | Search for a pattern in files (regex)                 |
-| `glob`        | Find files matching a glob pattern                     |
+| Tool          | Description                                   |
+| ------------- | --------------------------------------------- |
+| `read_file`   | Read the contents of a file                   |
+| `write_file`  | Write or overwrite a file                     |
+| `delete_file` | Delete a file                                 |
+| `bash`        | Execute a Bash command and capture its output |
+| `grep`        | Search for a pattern in files (regex)         |
+| `glob`        | Find files matching a glob pattern            |
+| `read_pdf`    | Extract text from a PDF file (used for RAG)   |
+| `search_pdf`  | Perform a semantic search over indexed PDFs   |
 
 > **Security:** All file operations are sandboxed to the directory where LlamaCode was launched. The AI cannot access files outside of it.
 
@@ -142,8 +146,11 @@ OLLAMA_HOST=http://192.168.1.10:11434 pnpm start
 src/
   lib/
     agent.ts       # Main CLI loop, input routing
-    command.ts     # Built-in command handlers (/help, /reset, etc.)
+    chunk.ts       # Splits long text into overlapping chunks for RAG embedding
+    command.ts     # Built‑in command handlers (/help, /reset, etc.)
     constant.ts    # Model, ANSI colors, tool definitions
+    db.ts           # SQLite wrapper for vector store persistence
+    embed.ts        # Handles text embedding using the configured model
     invoke.ts      # AI invocation and tool execution loop
     ollama.ts      # Ollama client and schema conversion
     print.ts       # Colored terminal output
@@ -157,6 +164,8 @@ src/
     bash.ts
     grep.ts
     glob.ts
+    read_pdf.ts
+    search_pdf.ts
     index.ts
   index.ts         # Entry point
   type.ts          # Shared TypeScript types
