@@ -1,6 +1,6 @@
 # 🦙 LlamaCode
 
-An AI‑powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript. **Now includes Retrieval‑Augmented Generation (RAG) support using a SQLite‑backed vector store.**
+An AI‑powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript. **Now includes Retrieval‑Augmented Generation (RAG) support using a SQLite‑backed vector store** and a **sub‑agent** system for delegating complex tasks.
 
 ---
 
@@ -111,18 +111,31 @@ LlamaCode will start an interactive CLI session in your current working director
 
 LlamaCode gives the AI access to the following operations within your **current working directory**:
 
-| Tool          | Description                                   |
-| ------------- | --------------------------------------------- |
-| `read_file`   | Read the contents of a file                   |
-| `write_file`  | Write or overwrite a file                     |
-| `delete_file` | Delete a file                                 |
-| `bash`        | Execute a Bash command and capture its output |
-| `grep`        | Search for a pattern in files (regex)         |
-| `glob`        | Find files matching a glob pattern            |
-| `read_pdf`    | Extract text from a PDF file (used for RAG)   |
-| `search_pdf`  | Perform a semantic search over indexed PDFs   |
+| Tool          | Description                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `read_file`   | Read the contents of a file                                                                                       |
+| `write_file`  | Write or overwrite a file                                                                                         |
+| `delete_file` | Delete a file                                                                                                     |
+| `bash`        | Execute a Bash command and capture its output                                                                     |
+| `grep`        | Search for a pattern in files (regex)                                                                             |
+| `glob`        | Find files matching a glob pattern                                                                                |
+| `read_pdf`    | Extract text from a PDF file (used for RAG)                                                                       |
+| `search_pdf`  | Perform a semantic search over indexed PDFs                                                                       |
+| `sub_agent`   | Delegate complex or multi‑step operations to a secondary agent, enabling richer workflows and parallel tool usage |
 
 > **Security:** All file operations are sandboxed to the directory where LlamaCode was launched. The AI cannot access files outside of it.
+
+---
+
+## Sub‑Agent Feature
+
+The newly added **sub‑agent** (`src/tools/sub_agent.ts`) allows the primary LlamaCode agent to spin up a lightweight secondary agent for handling long‑running or multi‑step tasks. This improves responsiveness and keeps the main conversation focused while the sub‑agent works in the background. Use the `sub_agent` tool when you need the AI to:
+
+- Perform a series of dependent operations without blocking the main thread.
+- Run intensive computation or data processing tasks.
+- Interact with external services or APIs that require multiple steps.
+
+The sub‑agent shares the same sandboxed environment and tool set, but operates under its own conversational context, returning results back to the primary agent when complete.
 
 ---
 
@@ -151,9 +164,9 @@ src/
     constant.ts    # Model, ANSI colors, tool definitions
     db.ts           # SQLite wrapper for vector store persistence
     embed.ts        # Handles text embedding using the configured model
-    invoke.ts      # AI invocation and tool execution loop
+    invoke.ts       # AI invocation and tool execution loop
     ollama.ts      # Ollama client and schema conversion
-    print.ts       # Colored terminal output
+    print.ts        # Colored terminal output
     readline.ts    # User input interface
     security.ts    # Path sandboxing (safePath)
     store.ts       # Conversation history and system prompt
@@ -167,6 +180,7 @@ src/
     read_pdf.ts
     search_pdf.ts
     index.ts
+    sub_agent.ts
   index.ts         # Entry point
   type.ts          # Shared TypeScript types
 ```
