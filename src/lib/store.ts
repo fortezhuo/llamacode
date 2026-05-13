@@ -1,6 +1,6 @@
 import type { Message } from "../type.js"
 
-class Store {
+export class Store {
   private messages: Message[] = []
   private systemPrompt: string = ""
 
@@ -21,7 +21,3 @@ class Store {
     ] satisfies Message[]
   }
 }
-
-const store = new Store()
-store.setSystemPrompt(`Concise coding assistant. cwd: ${process.cwd()}`)
-export { store }

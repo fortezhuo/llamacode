@@ -1,9 +1,9 @@
 import { RESET } from "./constant.js"
 import { print } from "./print.js"
 import { getReadlineInterface } from "./readline.js"
-import { store } from "./store.js"
+import type { Store } from "./store.js"
 
-type CommandHandler = () => void | Promise<void>
+type CommandHandler = (store?: Store) => void | Promise<void>
 
 const rl = getReadlineInterface()
 
@@ -26,7 +26,11 @@ export const COMMAND_HANDLER = new Map<string, CommandHandler>([
   ],
   [
     "/messages",
-    () => {
+    (store?: Store) => {
+      if (!store) {
+        print().red("No conversation to display.")
+        return
+      }
       const messages = store.getMessages()
       print().blue(`Current conversation (${messages.length} messages):`)
       messages.forEach((msg) => {
@@ -44,7 +48,11 @@ export const COMMAND_HANDLER = new Map<string, CommandHandler>([
   ],
   [
     "/reset",
-    () => {
+    (store?: Store) => {
+      if (!store) {
+        print().red("No conversation to reset.")
+        return
+      }
       store.clearMessages()
       print().green("Conversation cleared!")
     },

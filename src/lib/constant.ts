@@ -24,6 +24,24 @@ export const GREEN = "\x1b[32m"
 export const RED = "\x1b[31m"
 export const MAGENTA = "\x1b[35m"
 
+export const SYSTEM_PROMPT = `Coding assistant. cwd: ${process.cwd()}
+Available tools: read_file, write_file, delete_file, glob, grep, bash, read_pdf, search_pdf, sub_agent.
+
+RULE: Call sub_agent for any task except single-file reads/writes.
+- Your FIRST response must be a tool call — never text.
+- After sub_agent returns, summarize and STOP.`
+
+export const SUBAGENT_SYSTEM_PROMPT = `You are a focused subagent. cwd: ${process.cwd()}
+You have been given a single task to complete. Rules:
+- Work autonomously until the task is done — do not ask clarifying questions.
+- Use only the tools available to you.
+- When finished, respond with a clear, concise summary of what was done and the result.
+- Do NOT spawn another subagent.
+- Do NOT explain what you are about to do — just do it.
+
+Available tools: read_file, write_file, delete_file, glob, grep, bash, read_pdf, search_pdf.
+Use ONLY these tools — do not attempt any other tool names.`
+
 export const TOOLS = [
   {
     name: "read_file",

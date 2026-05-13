@@ -43,8 +43,11 @@ The content is organized as follows:
 src/
   lib/
     agent.ts
+    chunk.ts
     command.ts
     constant.ts
+    db.ts
+    embed.ts
     invoke.ts
     ollama.ts
     print.ts
@@ -58,12 +61,17 @@ src/
     grep.ts
     index.ts
     read_file.ts
+    read_pdf.ts
+    search_pdf.ts
+    sub_agent.ts
     write_file.ts
   index.ts
   type.ts
 .gitignore
 .prettierrc
 package.json
+pnpm-workspace.yaml
+rag.db
 README.md
 tsconfig.json
 </directory_structure>
@@ -71,11 +79,45 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
+<file path="src/tools/sub_agent.ts">
+import { startSubAgent } from "../lib/agent.js"
+
+export async function sub_agent(
+  args: Record<string, unknown>,
+): Promise<string> {
+  const task = args.task as string
+  const context = args.context as string | undefined
+  const toolsRaw = args.tools as string | undefined
+  const maxSteps = (args.max_steps as number | undefined) ?? 20
+
+  const tools = toolsRaw
+    ? toolsRaw
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)
+    : undefined
+
+  try {
+    const store = await startSubAgent({ task, tools, context, maxSteps })
+    const messages = store.getMessages()
+
+    return [`=== Subagent Result ===`, `Task: ${task}`, messages].join("\n")
+  } catch (error) {
+    return `Subagent failed: ${(error as Error).message}`
+  }
+}
+</file>
+
 <file path="src/lib/agent.ts">
+import type { SubAgentOption } from "../type.js"
 import { COMMAND_HANDLER } from "./command.js"
+import { SUBAGENT_SYSTEM_PROMPT } from "./constant.js"
 import { invoke } from "./invoke.js"
 import { print } from "./print.js"
 import { ask } from "./readline.js"
+import { Store } from "./store.js"
+
+const store = new Store()
 
 export async function startAgent() {
   print().separator()
@@ -85,15 +127,34 @@ export async function startAgent() {
   if (input.startsWith("/")) {
     const handler = COMMAND_HANDLER.get(input)
     if (handler) {
-      await handler()
+      await handler(store)
     } else {
       print().red(`Unknown command: ${input}`)
     }
   } else {
-    await invoke(input)
+    await invoke(input, store)
   }
 
   return startAgent()
+}
+
+export async function startSubAgent(option: SubAgentOption) {
+  print().separator()
+  const store = new Store()
+  store.setSystemPrompt(SUBAGENT_SYSTEM_PROMPT)
+  await invoke(option.task, store, option)
+  return store
+}
+</file>
+
+<file path="src/lib/chunk.ts">
+export function chunk(text: string, size = 500, overlap = 50): string[] {
+  const result: string[] = []
+  const arr = text.split(/\s+/)
+  for (let i = 0; i < arr.length; i += size - overlap) {
+    result.push(arr.slice(i, i + size).join(" "))
+  }
+  return result
 }
 </file>
 
@@ -101,9 +162,9 @@ export async function startAgent() {
 import { RESET } from "./constant.js"
 import { print } from "./print.js"
 import { getReadlineInterface } from "./readline.js"
-import { store } from "./store.js"
+import type { Store } from "./store.js"
 
-type CommandHandler = () => void | Promise<void>
+type CommandHandler = (store?: Store) => void | Promise<void>
 
 const rl = getReadlineInterface()
 
@@ -126,7 +187,11 @@ export const COMMAND_HANDLER = new Map<string, CommandHandler>([
   ],
   [
     "/messages",
-    () => {
+    (store?: Store) => {
+      if (!store) {
+        print().red("No conversation to display.")
+        return
+      }
       const messages = store.getMessages()
       print().blue(`Current conversation (${messages.length} messages):`)
       messages.forEach((msg) => {
@@ -144,7 +209,11 @@ export const COMMAND_HANDLER = new Map<string, CommandHandler>([
   ],
   [
     "/reset",
-    () => {
+    (store?: Store) => {
+      if (!store) {
+        print().red("No conversation to reset.")
+        return
+      }
       store.clearMessages()
       print().green("Conversation cleared!")
     },
@@ -160,53 +229,97 @@ export const COMMAND_HANDLER = new Map<string, CommandHandler>([
 ])
 </file>
 
-<file path="src/lib/invoke.ts">
-import { print } from "./print.js"
-import { store } from "./store.js"
-import { chat } from "./ollama.js"
-import type { ToolCall } from "ollama"
-import * as listTools from "../tools/index.js"
+<file path="src/lib/db.ts">
+import Database from "better-sqlite3"
+import * as sqliteVec from "sqlite-vec"
+import path from "path"
+import fs from "fs"
 
-export async function invoke(input: string) {
-  store.addMessage({ role: "user", content: input })
+const DB_PATH = path.join(process.cwd(), "rag.db")
+let db: Database.Database | null = null
 
-  while (true) {
-    const messages = store.getMessages()
-    print("assistant").dim(`Thinking... (${messages.length} messages)`)
-    const response = await chat(messages)
-    const { content, tool_calls } = response.message
+export function getDatabase(): Database.Database {
+  if (db) return db
+  const isNew = !fs.existsSync(DB_PATH)
+  db = new Database(DB_PATH)
+  sqliteVec.load(db)
 
-    if (tool_calls && tool_calls.length > 0) {
-      store.addMessage({ role: "assistant", content, tool_calls })
+  if (isNew) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        content TEXT NOT NULL
+      );
+    `)
 
-      for (const tool_call of tool_calls) {
-        const { name, arguments: args } = (tool_call as ToolCall).function
-        print("assistant").magenta(`Invoking tool: ${name}`)
-        try {
-          if (name in listTools) {
-            const toolFunc = (listTools as Record<string, Function>)[name]
-            if (typeof toolFunc == "function") {
-              const result = await toolFunc(args)
-              store.addMessage({ role: "tool", content: result })
-            } else {
-              throw new Error(`Tool is not a function: ${name}`)
-            }
-          } else {
-            throw new Error(`Tool not found: ${name}`)
-          }
-        } catch (error) {
-          print("assistant").red(`Error occurred while invoking tool: ${name}`)
-          store.addMessage({
-            role: "tool",
-            content: `Error: ${(error as Error).message}`,
-          })
-        }
-      }
-    } else {
-      print("assistant").bold(content)
-      break
-    }
+    db.exec(`
+      CREATE VIRTUAL TABLE vec_documents USING vec0(
+        rowid INTEGER PRIMARY KEY,
+        embedding FLOAT[768] 
+      );
+    `)
   }
+  return db
+}
+
+export function isIndexed(source: string): boolean {
+  const db = getDatabase()
+  const sql = db.prepare("SELECT 1 FROM documents WHERE source = ?")
+  const result = sql.get(source)
+  return !!result
+}
+
+export function saveChunks(
+  source: string,
+  content: string,
+  embedding: Float32Array,
+) {
+  try {
+    const db = getDatabase()
+    const insert = db.prepare(
+      "INSERT INTO documents (source, content) VALUES (?, ?)",
+    )
+    const insertVec = db.prepare(
+      "INSERT INTO vec_documents (rowid, embedding) VALUES (?, ?)",
+    )
+
+    const result = insert.run(source, content)
+    const rowid = BigInt(result.lastInsertRowid)
+    insertVec.run(rowid, embedding)
+  } catch (error) {
+    console.error(`Error saving chunks: ${(error as Error).message}`)
+  }
+}
+
+export function searchSimilar(embedding: Float32Array, limit = 5) {
+  const db = getDatabase()
+  return db
+    .prepare(
+      `
+    SELECT d.source, d.content, v.distance
+    FROM vec_documents v
+    LEFT JOIN documents d ON d.id = v.rowid
+    WHERE v.embedding MATCH ?
+    AND k = ?
+    ORDER BY v.distance
+  `,
+    )
+    .all(embedding, limit)
+}
+</file>
+
+<file path="src/lib/embed.ts">
+import { getOllamaClient } from "./ollama.js"
+import { EMBED_MODEL } from "./constant.js"
+export async function embed(text: string): Promise<Float32Array> {
+  const client = getOllamaClient()
+  const response = await client.embed({
+    model: EMBED_MODEL,
+    input: text,
+  })
+  const embedding = response.embeddings[0] ?? []
+  return new Float32Array(embedding)
 }
 </file>
 
@@ -345,7 +458,7 @@ export function safePath(inputPath: string): string {
 <file path="src/lib/store.ts">
 import type { Message } from "../type.js"
 
-class Store {
+export class Store {
   private messages: Message[] = []
   private systemPrompt: string = ""
 
@@ -366,10 +479,6 @@ class Store {
     ] satisfies Message[]
   }
 }
-
-const store = new Store()
-store.setSystemPrompt(`Concise coding assistant. cwd: ${process.cwd()}`)
-export { store }
 </file>
 
 <file path="src/tools/bash.ts">
@@ -468,6 +577,31 @@ export async function read_file(args: Record<string, unknown>) {
 }
 </file>
 
+<file path="src/tools/search_pdf.ts">
+import { searchSimilar } from "../lib/db.js"
+import { embed } from "../lib/embed.js"
+
+export async function search_pdf(
+  args: Record<string, unknown>,
+): Promise<string> {
+  try {
+    const query = args.query as string
+    const embedding = await embed(query.trim())
+    const results = await searchSimilar(embedding)
+    if (results.length === 0)
+      return "No relevant content found in indexed documents."
+
+    const context = results
+      .map((r: any, i) => `[${i + 1}] source: ${r.source}\n${r.content}`)
+      .join("\n\n")
+
+    return `Based on the following excerpts, answer the user's question: "${query}"\n\n${context}`
+  } catch (error) {
+    return "An error occurred while searching the documents."
+  }
+}
+</file>
+
 <file path="src/tools/write_file.ts">
 import fs from "fs/promises"
 import { safePath } from "../lib/security.js"
@@ -496,6 +630,13 @@ main()
 
 <file path="src/type.ts">
 import type { ToolCall } from "ollama"
+
+export type SubAgentOption = {
+  task: string
+  context?: string | undefined
+  tools?: string[] | undefined
+  maxSteps?: number
+}
 
 export type Message = {
   role: "system" | "user" | "assistant" | "tool"
@@ -669,6 +810,12 @@ cdk.out
 }
 </file>
 
+<file path="pnpm-workspace.yaml">
+allowBuilds:
+  better-sqlite3: true
+  esbuild: false
+</file>
+
 <file path="tsconfig.json">
 {
   // Visit https://aka.ms/tsconfig to read more about this file
@@ -710,8 +857,46 @@ cdk.out
 }
 </file>
 
+<file path="src/tools/read_pdf.ts">
+import fs from "fs/promises"
+import { extractText } from "unpdf"
+import { embed } from "../lib/embed.js"
+import { chunk } from "../lib/chunk.js"
+import { saveChunks } from "../lib/db.js"
+
+export async function read_pdf(args: Record<string, unknown>): Promise<any> {
+  try {
+    const filePath = args.path as string
+    const fileBuffer = await fs.readFile(filePath)
+    const uint8Array = new Uint8Array(
+      fileBuffer.buffer,
+      fileBuffer.byteOffset,
+      fileBuffer.byteLength,
+    )
+
+    const result = await extractText(uint8Array)
+    const chunks = await chunk(result.text.join(" "))
+
+    for (const [_, element] of chunks.entries()) {
+      const embedding = await embed(element)
+      saveChunks(`${filePath}`, element, embedding)
+    }
+
+    return `Indexed ${chunks.length} chunks from ${filePath}. You can now use search_pdf to answer questions about this document.`
+  } catch (error) {
+    console.error(`Error reading PDF: ${(error as Error).message}`)
+    return ""
+  }
+}
+</file>
+
+<file path="rag.db">
+
+</file>
+
 <file path="src/lib/constant.ts">
 export const MODEL = "gpt-oss:120b-cloud"
+export const EMBED_MODEL = "nomic-embed-text"
 export const TITLE = `
  🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙🦙 
  🦙                                                                                🦙 
@@ -735,6 +920,26 @@ export const CYAN = "\x1b[36m"
 export const GREEN = "\x1b[32m"
 export const RED = "\x1b[31m"
 export const MAGENTA = "\x1b[35m"
+
+export const SYSTEM_PROMPT = `Concise coding assistant. cwd: ${process.cwd()}
+
+MANDATORY: Before executing any task, you MUST call sub_agent if ANY condition is true:
+- Task mentions 2 or more directories (e.g. "src/lib and src/tools")
+- Task uses words: "analyze", "refactor all", "find in this codebase", "semua"
+- Task requires reading more than 3 files
+
+If sub_agent is needed, call it IMMEDIATELY as your first tool call — do NOT read files first.
+Only after sub_agent returns, summarize the result to the user.
+
+For simple single-file tasks, answer directly without sub_agent.`
+
+export const SUBAGENT_SYSTEM_PROMPT = `You are a focused subagent. cwd: ${process.cwd()}
+You have been given a single task to complete. Rules:
+- Work autonomously until the task is done — do not ask clarifying questions.
+- Use only the tools available to you.
+- When finished, respond with a clear, concise summary of what was done and the result.
+- Do NOT spawn another subagent.
+- Do NOT explain what you are about to do — just do it.`
 
 export const TOOLS = [
   {
@@ -776,7 +981,124 @@ export const TOOLS = [
     description: "Execute a bash command and return the output",
     input: [{ name: "cmd", type: "string", required: true }],
   },
+  {
+    name: "read_pdf",
+    description: "Read the contents of a PDF file",
+    input: [{ name: "path", type: "string", required: true }],
+  },
+  {
+    name: "search_pdf",
+    description: "Search for a term in indexed PDF files",
+    input: [{ name: "query", type: "string", required: true }],
+  },
 ]
+</file>
+
+<file path="src/lib/invoke.ts">
+import { print } from "./print.js"
+import { Store } from "./store.js"
+import { chat } from "./ollama.js"
+import * as listTools from "../tools/index.js"
+import { TOOLS } from "./constant.js"
+import type { ToolCall } from "ollama"
+import type { SubAgentOption } from "../type.js"
+
+type Methods = keyof ReturnType<typeof print>
+
+export async function invoke(
+  input: string,
+  store: Store,
+  opt?: SubAgentOption,
+) {
+  let step = 0
+  const maxStep = !opt ? Infinity : opt?.maxSteps!
+  const label = !opt ? "" : "Sub Agent "
+  const color = (!opt ? "dim" : "magenta") satisfies Methods
+  const allowedTools = !opt
+    ? undefined
+    : TOOLS.filter((t) => (opt?.tools || []).includes(t.name))
+
+  const content = !!opt?.context
+    ? `Context:\n${opt.context}\n\nTask: ${input}`
+    : input
+
+  store.addMessage({ role: "user", content })
+
+  while (step < maxStep) {
+    step++
+    const messages = store.getMessages()
+    print("assistant")[color](
+      `${label}Thinking... [${messages.length} tokens in context]`,
+    )
+    try {
+      const response = await chat(messages, allowedTools)
+      const { content, tool_calls } = response.message
+
+      if (tool_calls && tool_calls.length > 0) {
+        store.addMessage({ role: "assistant", content, tool_calls })
+
+        for (const tool_call of tool_calls) {
+          const { name, arguments: args } = (tool_call as ToolCall).function
+          print("assistant").cyan(`Invoking tool: ${name}`)
+          print("assistant").cyan(`[${name}] ${formatArgs(args)}`)
+          try {
+            if (name in listTools) {
+              const toolFunc = (listTools as Record<string, Function>)[name]
+              if (typeof toolFunc == "function") {
+                const result = await toolFunc(args)
+                store.addMessage({ role: "tool", content: result })
+              } else {
+                throw new Error(`Tool is not a function: ${name}`)
+              }
+            } else {
+              throw new Error(`Tool not found: ${name}`)
+            }
+          } catch (error) {
+            print("assistant").red(
+              `Error occurred while invoking tool: ${name}`,
+            )
+            store.addMessage({
+              role: "tool",
+              content: `Error: ${(error as Error).message}`,
+            })
+          }
+        }
+      } else {
+        print("assistant").bold(content)
+        break
+      }
+    } catch (error: unknown) {
+      const err = error as { status_code?: number; message: string }
+
+      if (err.status_code === 500) {
+        print("assistant").red(`Ollama Internal Error — Please try again`)
+      } else {
+        print("assistant").red(`Error: ${err.message}`)
+      }
+
+      break
+    }
+  }
+}
+
+function formatArgs(args: Record<string, unknown>): string {
+  if (typeof args.cmd === "string") return args.cmd
+  if (typeof args.command === "string") return args.command
+
+  if (typeof args.path === "string") {
+    const extra =
+      typeof args.content === "string"
+        ? ` (${args.content.split("\n").length} lines)`
+        : ""
+    return args.path + extra
+  }
+
+  if (typeof args.pat === "string") {
+    return args.path ? `${args.pat} in ${args.path}` : args.pat
+  }
+
+  return JSON.stringify(args)
+}
 </file>
 
 <file path="src/tools/index.ts">
@@ -786,6 +1108,9 @@ export * from "./delete_file.js"
 export * from "./glob.js"
 export * from "./grep.js"
 export * from "./bash.js"
+export * from "./read_pdf.js"
+export * from "./search_pdf.js"
+export * from "./sub_agent.js"
 </file>
 
 <file path="package.json">
@@ -804,11 +1129,15 @@ export * from "./bash.js"
   "license": "ISC",
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "fast-glob": "^3.3.3",
     "ollama": "^0.6.3",
-    "tsx": "^4.21.0"
+    "sqlite-vec": "^0.1.9",
+    "tsx": "^4.21.0",
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "typescript": "6.0.3"
   }
@@ -818,7 +1147,7 @@ export * from "./bash.js"
 <file path="README.md">
 # 🦙 LlamaCode
 
-An AI-powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript.
+An AI‑powered coding assistant that runs locally via [Ollama](https://ollama.com), built with TypeScript. **Now includes Retrieval‑Augmented Generation (RAG) support using a SQLite‑backed vector store.**
 
 ---
 
@@ -858,6 +1187,7 @@ LlamaCode requires a model that supports **tool/function calling**. Recommended 
 
 ```bash
 ollama pull gpt-oss:120b-cloud
+ollama pull nomic-embed-text
 ```
 
 > To see all models you have installed, run `ollama list`.
@@ -886,6 +1216,7 @@ Set the model in `src/lib/constant.ts` to match what you pulled:
 
 ```ts
 export const MODEL = "gpt-oss:120b-cloud"
+export const EMBED_MODEL = "nomic-embed-text"
 ```
 
 ---
@@ -903,7 +1234,7 @@ LlamaCode will start an interactive CLI session in your current working director
 
  ❯ buka package.json
  🦙 Invoking tool: read_file
- 🦙 Here's your package.json: ...
+ 🦙 Here’s your package.json: ...
 
  ❯ tambahkan script build ke package.json
  🦙 Invoking tool: write_file
@@ -927,14 +1258,16 @@ LlamaCode will start an interactive CLI session in your current working director
 
 LlamaCode gives the AI access to the following operations within your **current working directory**:
 
-| Tool          | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| `read_file`   | Read the contents of a file                           |
-| `write_file`  | Write or overwrite a file                             |
-| `delete_file` | Delete a file                                          |
-| `bash`        | Execute a Bash command and capture its output          |
-| `grep`        | Search for a pattern in files (regex)                 |
-| `glob`        | Find files matching a glob pattern                     |
+| Tool          | Description                                   |
+| ------------- | --------------------------------------------- |
+| `read_file`   | Read the contents of a file                   |
+| `write_file`  | Write or overwrite a file                     |
+| `delete_file` | Delete a file                                 |
+| `bash`        | Execute a Bash command and capture its output |
+| `grep`        | Search for a pattern in files (regex)         |
+| `glob`        | Find files matching a glob pattern            |
+| `read_pdf`    | Extract text from a PDF file (used for RAG)   |
+| `search_pdf`  | Perform a semantic search over indexed PDFs   |
 
 > **Security:** All file operations are sandboxed to the directory where LlamaCode was launched. The AI cannot access files outside of it.
 
@@ -960,8 +1293,11 @@ OLLAMA_HOST=http://192.168.1.10:11434 pnpm start
 src/
   lib/
     agent.ts       # Main CLI loop, input routing
-    command.ts     # Built-in command handlers (/help, /reset, etc.)
+    chunk.ts       # Splits long text into overlapping chunks for RAG embedding
+    command.ts     # Built‑in command handlers (/help, /reset, etc.)
     constant.ts    # Model, ANSI colors, tool definitions
+    db.ts           # SQLite wrapper for vector store persistence
+    embed.ts        # Handles text embedding using the configured model
     invoke.ts      # AI invocation and tool execution loop
     ollama.ts      # Ollama client and schema conversion
     print.ts       # Colored terminal output
@@ -975,6 +1311,8 @@ src/
     bash.ts
     grep.ts
     glob.ts
+    read_pdf.ts
+    search_pdf.ts
     index.ts
   index.ts         # Entry point
   type.ts          # Shared TypeScript types
